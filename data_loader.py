@@ -232,6 +232,36 @@ def get_logistic_features(df: pd.DataFrame):
     return X, y
 
 
+def get_direct_item_features(df: pd.DataFrame):
+    """
+    Return X (12 individual Likert items) and y (Purchase Intent Score)
+    for the direct-impact model WITHOUT composite scoring.
+    This tests whether bypassing aggregation changes conclusions.
+    The 3 items that form Purchase Intent Score are excluded from X
+    to avoid target leakage.
+    """
+    # All Likert predictors except the 3 that make up the DV
+    DIRECT_FEATURES = [
+        "Q_knowledgeable",
+        "Q_trustworthy",
+        "Q_gen_trust",
+        "Q_useful_info",
+        "Q_genuine",
+        "Q_demo_realistic",
+        "Q_authentic",
+        "Q_relatable",
+        "Q_pros_cons",
+        "Q_practical",
+        "Q_not_scripted",
+        "Q_interest_raised",
+    ]
+    TARGET = "Purchase_Intent_Score"
+    subset = df[DIRECT_FEATURES + [TARGET]].dropna()
+    X = subset[DIRECT_FEATURES]
+    y = subset[TARGET]
+    return X, y
+
+
 def full_pipeline(filepath: str) -> pd.DataFrame:
     """End-to-end: load → clean → engineer features. Returns analysis-ready df."""
     df = load_raw(filepath)

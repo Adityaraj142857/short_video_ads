@@ -30,7 +30,7 @@ from sklearn.metrics import r2_score, mean_squared_error, classification_report
 from sklearn.inspection import permutation_importance
 import scipy.stats as stats
 
-from data_loader import full_pipeline, get_model_features, get_logistic_features
+from data_loader import full_pipeline, get_model_features, get_logistic_features, get_direct_item_features
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -652,7 +652,92 @@ with tabs[3]:
 
     st.divider()
 
-    # ── Run models ─────────────────────────────────────────────────────────
+    # ── Research Model Diagram ──────────────────────────────────────────────
+    section_header("Research Model — Pictorial Representation", "🗺️")
+
+    fig_model = go.Figure()
+
+    # IV boxes (left column)
+    iv_items = [
+        ("Q1: Knowledgeable", 0.92), ("Q2: Trustworthy", 0.84),
+        ("Q3: Gen. Trust", 0.76),    ("Q4: Useful Info", 0.68),
+        ("Q5: Genuine", 0.60),       ("Q6: Consider Rec", 0.52),
+        ("Q7: Demo Realistic", 0.44),("Q8: Authentic", 0.36),
+        ("Q9: Relatable", 0.28),     ("Q10: Pros & Cons", 0.20),
+        ("Q11: Practical", 0.12),    ("Q12: Not Scripted", 0.04),
+    ]
+    for label, y in iv_items:
+        color = PALETTE["primary"] if y > 0.50 else PALETTE["accent"]
+        fig_model.add_shape(type="rect", x0=0, x1=0.22, y0=y-0.038, y1=y+0.038,
+                            fillcolor=color, line=dict(color="white", width=1))
+        fig_model.add_annotation(x=0.11, y=y, text=label, showarrow=False,
+                                 font=dict(color="white", size=10), xanchor="center")
+
+    # Composite Score boxes (middle)
+    composites = [
+        ("Trust Score", 0.80, PALETTE["secondary"]),
+        ("Engagement Score", 0.56, PALETTE["primary"]),
+        ("Content Relevance\nIndex", 0.32, PALETTE["accent"]),
+        ("Hours / Platform\n(Covariates)", 0.10, PALETTE["warn"]),
+    ]
+    for label, y, color in composites:
+        fig_model.add_shape(type="rect", x0=0.35, x1=0.58, y0=y-0.07, y1=y+0.07,
+                            fillcolor=color, line=dict(color="white",width=1.5))
+        fig_model.add_annotation(x=0.465, y=y, text=label, showarrow=False,
+                                 font=dict(color="white", size=10.5, family="Arial Bold"),
+                                 xanchor="center")
+
+    # DV box (right)
+    fig_model.add_shape(type="rect", x0=0.72, x1=0.95, y0=0.40, y1=0.60,
+                        fillcolor=PALETTE["ok"], line=dict(color="white", width=2))
+    fig_model.add_annotation(x=0.835, y=0.50,
+                             text="Purchase Intent\nScore (DV)", showarrow=False,
+                             font=dict(color="white", size=12, family="Arial Bold"),
+                             xanchor="center")
+
+    # Arrows: IVs → Composites
+    arrow_map = {
+        0.80: [0.92, 0.84, 0.76, 0.68, 0.60, 0.52],  # Trust Score
+        0.56: [0.44, 0.36, 0.28, 0.12],               # Engagement
+        0.32: [0.92, 0.68, 0.44, 0.20, 0.04],         # CRI
+    }
+    for comp_y, iv_ys in arrow_map.items():
+        for iv_y in iv_ys:
+            fig_model.add_annotation(x=0.35, y=comp_y, ax=0.22, ay=iv_y,
+                                     xref="x", yref="y", axref="x", ayref="y",
+                                     showarrow=True, arrowhead=2, arrowwidth=1,
+                                     arrowcolor="#aaaaaa")
+
+    # Arrows: Composites → DV
+    for comp_y in [0.80, 0.56, 0.32, 0.10]:
+        fig_model.add_annotation(x=0.72, y=0.50, ax=0.58, ay=comp_y,
+                                 xref="x", yref="y", axref="x", ayref="y",
+                                 showarrow=True, arrowhead=3, arrowwidth=2,
+                                 arrowcolor=PALETTE["ok"])
+
+    # Labels
+    fig_model.add_annotation(x=0.11, y=0.97, text="INDEPENDENT VARIABLES (Likert Items)",
+                             showarrow=False, font=dict(color=PALETTE["accent"], size=11, family="Arial Bold"))
+    fig_model.add_annotation(x=0.465, y=0.97, text="COMPOSITE SCORES (IVs)",
+                             showarrow=False, font=dict(color=PALETTE["secondary"], size=11, family="Arial Bold"))
+    fig_model.add_annotation(x=0.835, y=0.97, text="DEPENDENT VARIABLE",
+                             showarrow=False, font=dict(color=PALETTE["ok"], size=11, family="Arial Bold"))
+
+    fig_model.update_layout(
+        title="Research Model: Short-Form Video Content → Purchase Intention",
+        xaxis=dict(range=[0,1.05], showgrid=False, zeroline=False, visible=False),
+        yaxis=dict(range=[-0.05,1.02], showgrid=False, zeroline=False, visible=False),
+        template="plotly_dark", paper_bgcolor=PALETTE["surface"],
+        plot_bgcolor=PALETTE["surface"], height=540,
+        margin=dict(l=10, r=10, t=50, b=10),
+    )
+    st.plotly_chart(fig_model, use_container_width=True)
+    st.caption("Each Likert item flows into its corresponding composite score, which then predicts Purchase Intent Score. "
+               "Covariates (social media hours, platform) enter the model directly.")
+
+    st.divider()
+
+    # ── Run composite models ────────────────────────────────────────────────
     X, y = get_model_features(df)
 
     scaler = StandardScaler()
@@ -757,6 +842,130 @@ with tabs[3]:
         "purchase intent. Ridge shrinks all coefficients toward zero — features that survive "
         "shrinkage with large magnitude are the truly robust predictors."
     )
+
+    # ── Direct-Item Model (Feedback Point 6) ───────────────────────────────
+    st.divider()
+    section_header("Direct-Item Regression — Without Composite Scoring", "⚡")
+    st.markdown(
+        "Running OLS directly on 12 individual Likert items (no aggregation) tests whether "
+        "composite scoring adds or destroys predictive value."
+    )
+
+    X_direct, y_direct = get_direct_item_features(df)
+    scaler_d = StandardScaler()
+    Xd_scaled = scaler_d.fit_transform(X_direct)
+
+    ols_d = LinearRegression().fit(Xd_scaled, y_direct)
+    ridge_d = Ridge(alpha=1.0).fit(Xd_scaled, y_direct)
+
+    train_r2_d   = r2_score(y_direct, ols_d.predict(Xd_scaled))
+    train_r2_dr  = r2_score(y_direct, ridge_d.predict(Xd_scaled))
+
+    # LOO for direct models
+    def loo_r2_fn(model_class, Xs, y_vals, **kwargs):
+        y_oof = np.zeros(len(y_vals))
+        for i in range(len(y_vals)):
+            idx = list(range(len(y_vals)))
+            idx.pop(i)
+            m = model_class(**kwargs).fit(Xs[idx], y_vals.values[idx])
+            y_oof[i] = m.predict(Xs[i:i+1])[0]
+        return r2_score(y_vals, y_oof)
+
+    with st.spinner("Computing LOO for direct-item models…"):
+        loo_d  = loo_r2_fn(LinearRegression, Xd_scaled, y_direct)
+        loo_dr = loo_r2_fn(Ridge, Xd_scaled, y_direct, alpha=1.0)
+
+    # Comparison table
+    comp_data = {
+        "Model": [
+            "Composite OLS (6 features)",
+            "Composite Ridge (6 features)",
+            "Direct-Item OLS (12 features)",
+            "Direct-Item Ridge (12 features)",
+        ],
+        "Train R²": [
+            round(r2_score(y, y_pred_ols), 4),
+            round(r2_score(y, y_pred_ridge), 4),
+            round(train_r2_d, 4),
+            round(train_r2_dr, 4),
+        ],
+        "LOO R²": [
+            round(ols_loo_r2, 4),
+            round(ridge_loo_r2, 4),
+            round(loo_d, 4),
+            round(loo_dr, 4),
+        ],
+        "Overfit Gap": [
+            round(r2_score(y, y_pred_ols) - ols_loo_r2, 4),
+            round(r2_score(y, y_pred_ridge) - ridge_loo_r2, 4),
+            round(train_r2_d - loo_d, 4),
+            round(train_r2_dr - loo_dr, 4),
+        ],
+    }
+    comp_df = pd.DataFrame(comp_data)
+    st.dataframe(comp_df, use_container_width=True)
+
+    # Visual comparison
+    fig_compare = go.Figure()
+    fig_compare.add_trace(go.Bar(
+        x=comp_data["Model"], y=comp_data["Train R²"],
+        name="Train R²", marker_color=PALETTE["primary"]
+    ))
+    fig_compare.add_trace(go.Bar(
+        x=comp_data["Model"], y=comp_data["LOO R²"],
+        name="LOO R² (honest)", marker_color=PALETTE["secondary"]
+    ))
+    fig_compare.update_layout(
+        title="Composite Scoring vs Direct Items — Train R² vs LOO R²",
+        barmode="group", template="plotly_dark",
+        paper_bgcolor=PALETTE["surface"], yaxis_range=[0, 0.75],
+        yaxis_title="R²", height=380,
+    )
+    st.plotly_chart(fig_compare, use_container_width=True)
+
+    # Individual item coefficients for direct model
+    st.divider()
+    section_header("Direct-Item Standardized Coefficients (OLS)", "📌")
+    direct_coef = pd.DataFrame({
+        "Likert Item": X_direct.columns,
+        "OLS Coef": ols_d.coef_,
+        "Ridge Coef": ridge_d.coef_,
+    }).sort_values("OLS Coef", key=abs, ascending=True)
+
+    fig_dcoef = go.Figure()
+    fig_dcoef.add_trace(go.Bar(
+        x=direct_coef["OLS Coef"], y=direct_coef["Likert Item"],
+        orientation="h", name="OLS", marker_color=PALETTE["primary"]
+    ))
+    fig_dcoef.add_trace(go.Bar(
+        x=direct_coef["Ridge Coef"], y=direct_coef["Likert Item"],
+        orientation="h", name="Ridge (L2)", marker_color=PALETTE["secondary"]
+    ))
+    fig_dcoef.add_vline(x=0, line_color="white", line_dash="dot")
+    fig_dcoef.update_layout(
+        title="Individual Likert Item Coefficients (standardized)",
+        template="plotly_dark", paper_bgcolor=PALETTE["surface"],
+        barmode="group", height=440,
+        xaxis_title="Coefficient → Purchase Intent Score",
+    )
+    st.plotly_chart(fig_dcoef, use_container_width=True)
+
+    gap_composite = round(r2_score(y, y_pred_ols) - ols_loo_r2, 3)
+    gap_direct    = round(train_r2_d - loo_d, 3)
+
+    if gap_direct > gap_composite:
+        critic_box(
+            f"Direct-item OLS overfitting gap = {gap_direct} vs composite gap = {gap_composite}. "
+            f"The direct model is {round(gap_direct/gap_composite, 1)}× more overfit. "
+            "With 12 predictors at n=74, the model memorises noise. "
+            "Composite scoring is the better choice for this sample size.",
+            "⚠️ Direct-Item Model Severely Overfit"
+        )
+    else:
+        insight_box(
+            f"Direct-item model gap ({gap_direct}) ≤ composite gap ({gap_composite}). "
+            "Composite scoring did not reduce overfitting here — consider keeping raw items."
+        )
 
     # ── Logistic Regression (secondary) ────────────────────────────────────
     st.divider()
@@ -1256,24 +1465,24 @@ to construct properly weighted, validated composite scores.
     sev_df["Level"] = sev_df["Severity"].map(sev_color_map)
     st.dataframe(sev_df[["ID", "Level", "Severity", "Title"]], use_container_width=True)
 
-    st.markdown(
-        f"""
-        <div style='background:#1a0a0a;border:2px solid {PALETTE["danger"]};
-                    border-radius:10px;padding:20px;margin-top:16px'>
-            <h4 style='color:{PALETTE["danger"]}'>📌 Academic / Portfolio Positioning</h4>
-            <p style='color:#eee;font-size:0.9rem'>
-            Frame this project honestly as an <b>exploratory pilot study</b>, not a confirmatory study.
-            The appropriate language is: <i>"Our findings are preliminary and suggest [X]. 
-            A properly powered experimental study with n≥200, controlled exposure, and validated scales 
-            would be required to confirm these patterns."</i><br><br>
-            The value of this analysis lies in the methodological rigor of the approach, 
-            the composite score design, and the critical self-evaluation — not in the 
-            statistical power of the conclusions.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # st.markdown(
+    #     f"""
+    #     <div style='background:#1a0a0a;border:2px solid {PALETTE["danger"]};
+    #                 border-radius:10px;padding:20px;margin-top:16px'>
+    #         <h4 style='color:{PALETTE["danger"]}'>📌 Academic / Portfolio Positioning</h4>
+    #         <p style='color:#eee;font-size:0.9rem'>
+    #         Frame this project honestly as an <b>exploratory pilot study</b>, not a confirmatory study.
+    #         The appropriate language is: <i>"Our findings are preliminary and suggest [X]. 
+    #         A properly powered experimental study with n≥200, controlled exposure, and validated scales 
+    #         would be required to confirm these patterns."</i><br><br>
+    #         The value of this analysis lies in the methodological rigor of the approach, 
+    #         the composite score design, and the critical self-evaluation — not in the 
+    #         statistical power of the conclusions.
+    #         </p>
+    #     </div>
+    #     """,
+    #     unsafe_allow_html=True,
+    # )
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown(
